@@ -1,0 +1,17 @@
+services:
+  teledumb:
+    build: .
+    image: teledumb:local
+    container_name: teledumb
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?Set TELEGRAM_API_ID in .env}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?Set TELEGRAM_API_HASH in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    volumes:
+      - ./data:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8788}:8080"

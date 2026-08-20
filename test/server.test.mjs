@@ -30,4 +30,11 @@ test("keypad navigation and staged login remain available", async () => {
   const app = await load("../public/app.js");
   for (const feature of ["telegramLogin", "voiceRecorderScreen", "pinnedMessages", "searchScreen", "draftKey", "moveEmoji"]) assert.match(app, new RegExp(feature));
   assert.match(app, /state\.view === "telegram-login"/);
+  assert.match(app, /function frameFocusedItem\(target, direction\)/);
+  assert.match(app, /rect\.height <= available/);
+  assert.match(app, /Math\.max\(120, viewport\.bottom - viewport\.top - 8\)/);
+  assert.match(app, /state\.returnFocusTimestamp = timestamp/);
+  assert.match(app, /class="receipt-details scroll-focus focusable"/);
+  assert.match(app, /function toggleVoiceNote\(audio\)/);
+  assert.doesNotMatch(app, /class="voice-note focusable"/);
 });

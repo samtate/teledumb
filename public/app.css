@@ -51,3 +51,31 @@ body{background:radial-gradient(circle at top,#17352b 0,#0b1713 38%)}header{heig
 .video-thumb{position:relative;display:block}.video-thumb .media{pointer-events:none}.video-thumb .play-icon{position:absolute;top:50%;left:50%;display:grid;width:38px;height:38px;place-items:center;border-radius:50%;background:#000b;color:#fff;transform:translate(-50%,-50%);font-size:18px}
 .video-viewer{display:grid;width:100%;height:100%;padding:2px;place-items:center;background:#000}.video-viewer video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
 .menu-action{scroll-margin-top:48px}
+
+/* Denser QVGA presentation and focusable long-form menu details. */
+html,body{font-size:14px;line-height:1.2}
+header{height:38px;padding:9px 11px;font-size:14px}
+.row{min-height:48px;padding:6px 8px}
+.conversation-row{gap:7px}
+.avatar{flex-basis:34px;width:34px;height:34px;font-size:12px}
+.row .preview{margin-top:2px;font-size:12px}
+.menu-list{padding:6px 7px 10px}
+.menu-heading{margin:6px 5px 3px;font-size:9px}
+.menu-action{min-height:37px;gap:7px;margin-bottom:3px!important;padding:5px 7px;border-radius:7px;scroll-margin-top:40px}
+.menu-icon{flex-basis:25px;width:25px;height:25px;border-radius:6px;font-size:14px}
+.section-label{margin:7px 0 3px;font-size:10px}
+.emoji-row{gap:3px;margin:5px 0;padding:3px}
+.emoji{padding:5px;font-size:18px}
+.message-info{margin-bottom:5px;padding:5px}
+.receipt-details{margin-top:6px;padding:6px;scroll-margin-block:40px 8px}
+.receipt-details:focus{outline:3px solid var(--focus);outline-offset:-3px}
+.details-title{display:block;color:#dbe7e2;font-size:11px}
+.receipt-list li{padding:4px 2px}
+.room-screen header{height:29px;padding:6px 9px;font-size:13px}
+.usage-tally{float:right;margin:1px 0 0 8px;padding:2px 5px;border:1px solid #456357;border-radius:9px;background:#0a1712;color:#afc7bc;font-size:9px;font-weight:700;letter-spacing:0}
+.mindful-pause{position:fixed;inset:0 0 24px;z-index:20;display:grid;padding:18px;place-items:center;background:#07110dde}.mindful-pause>div{width:min(100%,270px);padding:17px 14px;border:1px solid #4d7162;border-radius:12px;background:linear-gradient(145deg,#193229,#10221c);box-shadow:0 8px 24px #000b;text-align:center}.mindful-pause h2{margin:5px 0 8px;font-size:19px}.mindful-pause p{margin:6px 0}.mindful-pause .action{margin-top:13px}.mindful-icon{display:grid;width:36px;height:36px;margin:auto;place-items:center;border-radius:50%;background:#294b3e;color:#d9eee5;font-size:21px}
+.room-screen .bubble{font-size:13px;line-height:1.16}
+.room-screen .compose input{height:28px;font-size:13px}
+.room-screen .compose button{width:32px;font-size:13px}
+.room-screen .replying{bottom:32px}
+.voice-note{height:28px}

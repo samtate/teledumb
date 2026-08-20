@@ -1,0 +1,79 @@
+name: Test and deploy TeleDumb
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teledumb-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DEPLOY_HOST: 100.70.142.113
+      DEPLOY_PORT: "24"
+      DEPLOY_USER: samtate
+      DEPLOY_HOST_ED25519_SHA256: SHA256:CPpDJF7szLXVJJ15Qzakr0llRD8HBcGoHFqlzPti9Qg
+      DEPLOY_KEY_ED25519_SHA256: SHA256:gdqcd+SOyxWcAbUIproSCOt6YtWrlezlP0R347vMzMg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test
+        run: |
+          npm install --ignore-scripts
+          node --check server.mjs
+          node --check public/app.js
+          npm test
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: 100.70.142.113
+
+      - name: Configure restricted deployment key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          key_fingerprint="$(ssh-keygen -y -f ~/.ssh/id_ed25519 | ssh-keygen -lf - -E sha256 | awk '{print $2; exit}')"
+          test "$key_fingerprint" = "$DEPLOY_KEY_ED25519_SHA256"
+          scan_path="$(mktemp)"
+          trap 'rm -f "$scan_path"' EXIT
+          ssh-keyscan -T 10 -p "$DEPLOY_PORT" -t ed25519 "$DEPLOY_HOST" > "$scan_path" 2>/dev/null
+          actual_fingerprint="$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2; exit}')"
+          test "$actual_fingerprint" = "$DEPLOY_HOST_ED25519_SHA256"
+          install -m 600 "$scan_path" ~/.ssh/known_hosts
+
+      - name: Deploy and rebuild on the NAS
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude-vcs \
+            --exclude=.env \
+            --exclude=data \
+            --exclude=node_modules \
+            --exclude=.github \
+            -C . -czf - . | ssh \
+              -i "$HOME/.ssh/id_ed25519" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" \
+              -o StrictHostKeyChecking=yes \
+              -p "$DEPLOY_PORT" \
+              "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /usr/local/bin/deploy-teledumb"

@@ -5,6 +5,10 @@ let refreshTimer;
 let typingTimer;
 let typingActive = false;
 let activeRecording = null;
+const MINDFUL_KEY = "teledumb-mindful-usage-v1";
+const MINDFUL_LAUNCH_GAP = 90_000;
+const MINDFUL_BURST_WINDOW = 45 * 60_000;
+const MINDFUL_TIME_THRESHOLDS = [15, 25];
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const EMOJI_GROUPS = {
   Faces: "😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 😉 😊 😇 🥰 😍 🤩 😘 😗 ☺️ 😚 😋 😛 😜 🤪 🤨 🧐 🤓 😎 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 🤗 🤔 🫣 🤭 🫢 🤫 🤥 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕",
@@ -31,7 +35,56 @@ function receiptTime(value) {
   return date.toLocaleString([], sameDay ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 function stopRefresh() { clearInterval(refreshTimer); }
-function screen(title, content, className = "") { const heading = title === "TeleDumb" ? `<span class="brand-title"><img src="/teledumb.png" alt="">TeleDumb</span>` : escapeHtml(title); app.innerHTML = `<section class="screen ${className}"><header>${heading}</header>${content}</section>`; app.scrollTop = 0; }
+function usageDay() { return new Date().toLocaleDateString("en-CA"); }
+function loadMindfulUsage() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MINDFUL_KEY) || "{}");
+    if (saved.day === usageDay()) return { day: saved.day, checks: Number(saved.checks) || 0, activeMs: Number(saved.activeMs) || 0, launches: Array.isArray(saved.launches) ? saved.launches : [], nudges: saved.nudges || {}, lastLaunch: Number(saved.lastLaunch) || 0 };
+  } catch {}
+  return { day: usageDay(), checks: 0, activeMs: 0, launches: [], nudges: {}, lastLaunch: 0 };
+}
+function saveMindfulUsage() { if (state.mindful) localStorage.setItem(MINDFUL_KEY, JSON.stringify(state.mindful)); }
+function usageLabel() { const usage = state.mindful; if (!usage) return ""; return `${usage.checks} check${usage.checks === 1 ? "" : "s"} · ${Math.floor(usage.activeMs / 60_000)}m`; }
+function usageBadge() { return state.mindful ? `<span class="usage-tally" aria-label="Today's usage">${escapeHtml(usageLabel())}</span>` : ""; }
+function refreshUsageBadge() { document.querySelectorAll(".usage-tally").forEach(node => { node.textContent = usageLabel(); }); }
+function startMindfulSession() {
+  if (state.mindfulStarted) return;
+  state.mindfulStarted = true; state.mindful = loadMindfulUsage();
+  const now = Date.now();
+  if (!state.mindful.lastLaunch || now - state.mindful.lastLaunch >= MINDFUL_LAUNCH_GAP) { state.mindful.checks++; state.mindful.launches.push(now); state.mindful.openedNow = true; }
+  state.mindful.lastLaunch = now; state.mindful.launches = state.mindful.launches.filter(time => now - time < 24 * 60 * 60_000); state.mindful.lastTick = now; state.mindfulVisible = !document.hidden;
+  saveMindfulUsage(); clearInterval(state.mindfulTimer); state.mindfulTimer = setInterval(updateMindfulTime, 15_000);
+}
+function updateMindfulTime() {
+  const usage = state.mindful; if (!usage) return;
+  const now = Date.now(); const elapsed = Math.max(0, now - (usage.lastTick || now)); usage.lastTick = now;
+  if (state.mindfulVisible !== false && !state.mindfulPause) usage.activeMs += elapsed;
+  saveMindfulUsage(); refreshUsageBadge(); maybeMindfulPause();
+}
+function mindfulReason() {
+  const usage = state.mindful; if (!usage || !usage.openedNow) return "";
+  usage.openedNow = false;
+  const now = Date.now(); const recent = usage.launches.filter(time => now - time <= MINDFUL_BURST_WINDOW).length;
+  if (recent >= 2 && (!usage.nudges.lastBurst || now - usage.nudges.lastBurst >= MINDFUL_BURST_WINDOW)) { usage.nudges.lastBurst = now; return "This is your second check in 45 minutes."; }
+  if ([4, 6, 9].includes(usage.checks) && !usage.nudges[`checks-${usage.checks}`]) { usage.nudges[`checks-${usage.checks}`] = true; return `This is check ${usage.checks} today.`; }
+  return "";
+}
+function maybeMindfulPause() {
+  if (!state.mindful || state.mindfulPause) return;
+  let reason = mindfulReason();
+  for (const minutes of MINDFUL_TIME_THRESHOLDS) {
+    const key = `minutes-${minutes}`;
+    if (!reason && state.mindful.activeMs >= minutes * 60_000 && !state.mindful.nudges[key]) { state.mindful.nudges[key] = true; reason = `You've spent ${minutes} minutes here today.`; }
+  }
+  saveMindfulUsage(); if (reason) showMindfulPause(reason);
+}
+function showMindfulPause(reason) {
+  state.mindfulPause = true; state.mindfulReturnFocus = document.activeElement;
+  app.insertAdjacentHTML("beforeend", `<section class="mindful-pause" role="dialog" aria-modal="true"><div><span class="mindful-icon">◷</span><h2>A quick pause</h2><p>${escapeHtml(reason)}</p><p class="hint">Open with intention, then carry on.</p><button id="mindful-continue" class="action primary focusable">Continue</button></div></section>`);
+  setSoftkeys("", "Continue", "Exit"); document.querySelector("#mindful-continue").addEventListener("click", dismissMindfulPause); focusFirst();
+}
+function dismissMindfulPause() { state.mindfulPause = false; document.querySelector(".mindful-pause")?.remove(); state.mindfulReturnFocus?.focus?.({ preventScroll: true }); state.mindfulReturnFocus = null; }
+function screen(title, content, className = "") { const heading = title === "TeleDumb" ? `<span class="brand-title"><img src="/teledumb.png" alt="">TeleDumb</span>` : escapeHtml(title); app.innerHTML = `<section class="screen ${className}"><header>${heading}${usageBadge()}</header>${content}</section>`; app.scrollTop = 0; }
 function actionError(error) { const target = document.querySelector("#action-error"); if (target) target.textContent = error.message; }
 
 function login(message = "") {
@@ -47,7 +100,7 @@ async function boot() {
   try {
     const status = await request("/api/status"); state.settings = status.settings || {}; state.capabilities = status.capabilities || {};
     if (!status.linked) return telegramLogin(status.authStage, status.passwordHint);
-    await conversations();
+    startMindfulSession(); await conversations(); maybeMindfulPause();
   } catch (error) {
     if (error.status === 401) return login();
     app.innerHTML = `<section class="center"><p class="error">${escapeHtml(error.message)}</p><button id="retry" class="action focusable">Retry</button></section>`;
@@ -129,16 +182,18 @@ async function openConversation(id) {
 }
 function mediaHtml(message) {
   if (message.viewOnce) return message.viewOnceOpened ? `<span class="view-once opened">◉ View-once media opened</span>` : `<button class="view-once focusable" data-view-once="${escapeHtml(message.id)}">◉ Open view-once media</button>`;
-  return (message.attachments || []).map((attachment, index) => { const src = `/api/attachment/${encodeURIComponent(message.id)}/${index}`; const dimensions = attachment.width && attachment.height ? ` width="${attachment.width}" height="${attachment.height}"` : ""; if (attachment.contentType?.startsWith("image/")) return `<img class="media" src="${src}" alt="${escapeHtml(attachment.caption || "Photo")}" loading="lazy"${dimensions}>`; if (attachment.contentType?.startsWith("video/")) return `<span class="video-thumb" data-video-src="${src}"><video class="media" src="${src}" preload="metadata" muted playsinline${dimensions}></video><span class="play-icon">▶</span></span>`; if (attachment.contentType?.startsWith("audio/")) return `<span class="voice-label">◉ Voice note</span><audio class="voice-note focusable" src="${src}" controls preload="metadata"></audio>`; return ""; }).join("");
+  return (message.attachments || []).map((attachment, index) => { const src = `/api/attachment/${encodeURIComponent(message.id)}/${index}`; const dimensions = attachment.width && attachment.height ? ` width="${attachment.width}" height="${attachment.height}"` : ""; if (attachment.contentType?.startsWith("image/")) return `<img class="media" src="${src}" alt="${escapeHtml(attachment.caption || "Photo")}" loading="lazy"${dimensions}>`; if (attachment.contentType?.startsWith("video/")) return `<span class="video-thumb" data-video-src="${src}"><video class="media" src="${src}" preload="metadata" muted playsinline${dimensions}></video><span class="play-icon">▶</span></span>`; if (attachment.contentType?.startsWith("audio/")) return `<span class="voice-label">▶ Voice note</span><audio class="voice-note" src="${src}" controls preload="metadata"></audio>`; return ""; }).join("");
 }
 function openImageViewer(src, alt = "Photo", timestamp = null) {
   state.roomScroll = app.scrollTop;
+  state.returnFocusTimestamp = timestamp;
   state.view = "image-viewer";
   app.innerHTML = `<section class="image-viewer"><img src="${src}" alt="${escapeHtml(alt)}"></section>`;
   setSoftkeys("", "", "Back");
 }
-function openVideoViewer(src) {
+function openVideoViewer(src, timestamp = null) {
   state.roomScroll = app.scrollTop;
+  state.returnFocusTimestamp = timestamp;
   state.view = "video-viewer";
   app.innerHTML = `<section class="video-viewer"><video src="${escapeHtml(src)}" controls autoplay playsinline></video></section>`;
   setSoftkeys("", "Play/Pause", "Back");
@@ -200,7 +255,8 @@ function renderRoom(payload) {
   document.querySelector("#cancel-reply")?.addEventListener("click", () => { state.replying = null; renderRoom(payload); });
   document.querySelectorAll("[data-message-time]").forEach(button => button.addEventListener("click", () => messageActions(Number(button.dataset.messageTime))));
   document.querySelectorAll("img.media").forEach(image => image.addEventListener("click", event => { event.stopPropagation(); openImageViewer(image.src, image.alt, Number(image.closest("[data-message-time]")?.dataset.messageTime)); }));
-  document.querySelectorAll(".video-thumb").forEach(wrapper => wrapper.addEventListener("click", event => { event.stopPropagation(); openVideoViewer(wrapper.dataset.videoSrc); }));
+  document.querySelectorAll(".video-thumb").forEach(wrapper => wrapper.addEventListener("click", event => { event.stopPropagation(); openVideoViewer(wrapper.dataset.videoSrc, Number(wrapper.closest("[data-message-time]")?.dataset.messageTime)); }));
+  document.querySelectorAll(".voice-note").forEach(audio => { audio.addEventListener("click", event => event.stopPropagation()); audio.addEventListener("play", () => updateVoiceNote(audio)); audio.addEventListener("pause", () => updateVoiceNote(audio)); audio.addEventListener("ended", () => updateVoiceNote(audio)); });
   document.querySelectorAll(".spoiler").forEach(element => element.addEventListener("click", event => { event.stopPropagation(); element.classList.toggle("revealed"); }));
   document.querySelectorAll("[data-view-once]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openViewOnce(button); }));
   document.querySelectorAll("[data-poll-time]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); votePoll(Number(button.dataset.pollTime), Number(button.dataset.option)); }));
@@ -274,7 +330,7 @@ function messageActions(timestamp) {
   const edit = message.direction === "out" ? `<button id="edit-message" class="action menu-action focusable"><span class="menu-icon">✎</span><span>Edit</span></button><button id="delete-message" class="action menu-action danger focusable"><span class="menu-icon">⌫</span><span>Delete for everyone</span></button>` : "";
   const receiptRows = Object.values(message.receipts || {}).sort((a, b) => Number(b.at || 0) - Number(a.at || 0)).map(item => { const label = item.status === "viewed" ? "Viewed" : item.status === "read" ? "Read" : "Delivered"; return `<li><strong>${escapeHtml(item.name)}</strong><span>${label} at ${escapeHtml(receiptTime(item.at))}</span></li>`; }).join("");
   const reactionRows = (message.reactions || []).slice().sort((a, b) => String(a.author || a.authorId || "").localeCompare(String(b.author || b.authorId || ""))).map(item => `<li><strong>${escapeHtml(item.author || item.authorId || "Unknown")}</strong><span class="reaction-detail">Reacted ${escapeHtml(item.emoji)}</span></li>`).join("");
-  const messageDetails = receiptRows || reactionRows ? `<details class="receipt-details" open><summary>Message details</summary>${reactionRows ? `<p class="detail-label">Reactions</p><ul class="receipt-list">${reactionRows}</ul>` : ""}${receiptRows ? `<p class="detail-label">Delivery</p><ul class="receipt-list">${receiptRows}</ul>` : ""}</details>` : "";
+  const messageDetails = receiptRows || reactionRows ? `<section class="receipt-details scroll-focus focusable" tabindex="0" aria-label="Message details"><strong class="details-title">Message details</strong>${reactionRows ? `<p class="detail-label">Reactions</p><ul class="receipt-list">${reactionRows}</ul>` : ""}${receiptRows ? `<p class="detail-label">Delivery</p><ul class="receipt-list">${receiptRows}</ul>` : ""}</section>` : "";
   const permitted = emoji => !Array.isArray(state.allowedReactions) || state.allowedReactions.includes(emoji);
   const quick = QUICK_REACTIONS.filter(permitted); const favourites = favouriteReactions().filter(permitted);
   screen("Message options", `<div class="menu-list"><div class="message-info"><strong>${escapeHtml(message.direction === "out" ? "You" : message.sender)}</strong><time>${escapeHtml(new Date(message.timestamp).toLocaleString())}</time></div><button id="reply-message" class="action menu-action focusable"><span class="menu-icon">↩</span><span>Reply</span></button><button id="pin-message" class="action menu-action focusable"><span class="menu-icon">⌖</span><span>${message.pinned ? "Unpin" : "Pin"} message</span></button>${message.poll && message.direction === "out" && !message.poll.closed ? `<button id="close-poll" class="action menu-action focusable"><span class="menu-icon">■</span><span>Close poll</span></button>` : ""}${quick.length ? `<p class="section-label">Quick reaction</p><div class="emoji-row">${quick.map(emoji => `<button class="emoji focusable" data-emoji="${emoji}">${emoji}</button>`).join("")}</div>` : ""}${favourites.length ? `<p class="section-label">Your frequent reactions</p><div class="emoji-row">${favourites.map(emoji => `<button class="emoji focusable" data-emoji="${emoji}">${emoji}</button>`).join("")}</div>` : ""}<button id="more-reactions" class="action menu-action focusable"><span class="menu-icon">☺</span><span>More reactions…</span><span class="chevron">›</span></button>${edit}${messageDetails}<p id="action-error" class="error"></p></div>`);
@@ -440,15 +496,45 @@ function chatOptions() {
   document.querySelector("#archive-chat").addEventListener("click", async () => { try { await request("/api/conversation/archive", { method: "POST", body: JSON.stringify({ conversationId: state.selected.id, archived: !archived }) }); state.selected.archived = !archived; await conversations(null, state.showingArchived); } catch (error) { actionError(error); } }); focusFirst();
 }
 
-function moveFocus(direction) { const items = [...document.querySelectorAll(".focusable:not(:disabled)")]; if (!items.length) return; const index = Math.max(0, items.indexOf(document.activeElement)); items[(index + direction + items.length) % items.length].focus(); document.activeElement.scrollIntoView({ block: "nearest" }); }
+function messageViewport() {
+  const appRect = app.getBoundingClientRect();
+  return {
+    top: document.querySelector("header")?.getBoundingClientRect().bottom || appRect.top,
+    bottom: document.querySelector(".compose")?.getBoundingClientRect().top || appRect.bottom,
+  };
+}
+function frameFocusedItem(target, direction) {
+  const message = state.view === "room" ? target.closest?.("[data-message-time]") : null;
+  if (!message) return target.scrollIntoView({ block: "nearest" });
+  const viewport = messageViewport(); const rect = message.getBoundingClientRect(); const available = viewport.bottom - viewport.top;
+  if (rect.height <= available) {
+    if (rect.top < viewport.top) app.scrollBy({ top: rect.top - viewport.top });
+    else if (rect.bottom > viewport.bottom) app.scrollBy({ top: rect.bottom - viewport.bottom });
+  } else if (direction > 0) app.scrollBy({ top: rect.top - viewport.top });
+  else app.scrollBy({ top: rect.bottom - viewport.bottom });
+}
+function moveFocus(direction) {
+  const items = [...document.querySelectorAll(".focusable:not(:disabled)")]; if (!items.length) return;
+  const index = items.indexOf(document.activeElement); const target = items[(Math.max(0, index) + direction + items.length) % items.length];
+  target.focus({ preventScroll: true }); frameFocusedItem(target, direction);
+}
+function updateVoiceNote(audio) {
+  const label = audio.closest("[data-message-time]")?.querySelector(".voice-label");
+  if (label) label.textContent = audio.paused ? "▶ Voice note" : "❚❚ Playing voice note";
+  if (document.activeElement?.closest?.("[data-message-time]")?.contains(audio)) setSoftkeys("Message", audio.paused ? "Play" : "Pause", "Back");
+}
+function toggleVoiceNote(audio) {
+  document.querySelectorAll(".voice-note").forEach(other => { if (other !== audio && !other.paused) other.pause(); });
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+}
 function scrollFocusedMessage(direction) {
-  const message = document.activeElement?.closest?.("[data-message-time]");
-  if (!message || state.view !== "room") return false;
-  const rect = message.getBoundingClientRect();
-  const headerBottom = document.querySelector("header")?.getBoundingClientRect().bottom || app.getBoundingClientRect().top;
-  const composeTop = document.querySelector(".compose")?.getBoundingClientRect().top || app.getBoundingClientRect().bottom;
-  if (direction > 0 && rect.bottom > composeTop + 1) { app.scrollBy({ top: Math.min(52, rect.bottom - composeTop) }); return true; }
-  if (direction < 0 && rect.top < headerBottom - 1) { app.scrollBy({ top: -Math.min(52, headerBottom - rect.top) }); return true; }
+  const focused = document.activeElement;
+  const panel = state.view === "room" ? focused?.closest?.("[data-message-time]") : focused?.closest?.(".scroll-focus");
+  if (!panel) return false;
+  const rect = panel.getBoundingClientRect(); const viewport = messageViewport();
+  const page = Math.max(120, viewport.bottom - viewport.top - 8);
+  if (direction > 0 && rect.bottom > viewport.bottom + 1) { app.scrollBy({ top: Math.min(page, rect.bottom - viewport.bottom) }); return true; }
+  if (direction < 0 && rect.top < viewport.top - 1) { app.scrollBy({ top: -Math.min(page, viewport.top - rect.top) }); return true; }
   return false;
 }
 function moveEmoji(horizontal, vertical) {
@@ -488,12 +574,14 @@ function back() {
 }
 function exitApp() { if (history.length > 1) history.back(); else window.close(); }
 function softLeft() {
+  if (state.mindfulPause) return dismissMindfulPause();
   if (state.view === "login") return document.querySelector("#login-form")?.requestSubmit();
   if (state.view === "telegram-login") return document.querySelector("#telegram-auth")?.requestSubmit();
   if (state.view === "conversations") return mainMenu();
   if (state.view === "room") { const message = document.activeElement?.closest?.("[data-message-time]"); return message ? messageActions(Number(message.dataset.messageTime)) : chatOptions(); }
 }
 function softRight() {
+  if (state.mindfulPause) return exitApp();
   if (state.view === "linking") return linkScreen();
   if (["login", "telegram-login"].includes(state.view) || (state.view === "conversations" && !state.showingArchived)) return exitApp();
   return back();
@@ -503,7 +591,7 @@ window.addEventListener("keydown", event => {
   if (event.repeat && ["ShiftLeft", "ShiftRight"].includes(event.code)) return;
   if (event.key === "Enter" && state.view === "video-viewer") { event.preventDefault(); const video = document.querySelector(".video-viewer video"); return video.paused ? video.play() : video.pause(); }
   if (state.view === "video-viewer" && ["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const video = document.querySelector(".video-viewer video"); video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + (event.key === "ArrowLeft" ? -10 : 10))); return; }
-  if (event.key === "Enter" && document.activeElement?.matches("[data-message-time]")) { event.preventDefault(); const image = document.activeElement.querySelector("img.media"); if (image) return openImageViewer(image.src, image.alt, Number(document.activeElement.dataset.messageTime)); const video = document.activeElement.querySelector(".video-thumb"); if (video) return openVideoViewer(video.dataset.videoSrc); return messageActions(Number(document.activeElement.dataset.messageTime)); }
+  if (event.key === "Enter" && document.activeElement?.matches("[data-message-time]")) { event.preventDefault(); const timestamp = Number(document.activeElement.dataset.messageTime); const image = document.activeElement.querySelector("img.media"); if (image) return openImageViewer(image.src, image.alt, timestamp); const video = document.activeElement.querySelector(".video-thumb"); if (video) return openVideoViewer(video.dataset.videoSrc, timestamp); const audio = document.activeElement.querySelector(".voice-note"); if (audio) return toggleVoiceNote(audio); return messageActions(timestamp); }
   if (event.key === "Enter" && document.activeElement?.matches(".spoiler")) { event.preventDefault(); document.activeElement.classList.toggle("revealed"); return; }
   if (state.view === "pinned-view" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
     event.preventDefault();
@@ -522,11 +610,14 @@ window.addEventListener("keydown", event => {
   if ((event.key === "Backspace" || event.key === "Call") && state.view === "room" && (!event.target.matches("input") || !event.target.value)) { event.preventDefault(); back(); }
 });
 window.addEventListener("back", event => { event.preventDefault(); softRight(); });
+document.addEventListener("visibilitychange", () => { updateMindfulTime(); if (state.mindful) { state.mindfulVisible = !document.hidden; state.mindful.lastTick = Date.now(); } });
+window.addEventListener("pagehide", updateMindfulTime);
 app.addEventListener("wheel", () => { if (state.view === "room") state.followBottom = false; }, { passive: true });
 app.addEventListener("touchstart", () => { if (state.view === "room") state.followBottom = false; }, { passive: true });
 document.addEventListener("focusin", event => {
   if (state.view !== "room") return;
   const message = event.target.closest?.("[data-message-time]");
-  setSoftkeys(message ? "Message" : "Options", message?.querySelector("img.media, .video-thumb") ? "Open" : message ? "Select" : "Type", "Back");
+  const audio = message?.querySelector(".voice-note");
+  setSoftkeys(message ? "Message" : "Options", audio ? (audio.paused ? "Play" : "Pause") : message?.querySelector("img.media, .video-thumb") ? "Open" : message ? "Select" : "Type", "Back");
 });
 boot();

@@ -73,6 +73,7 @@ header{height:38px;padding:9px 11px;font-size:14px}
 .receipt-list li{padding:4px 2px}
 .room-screen header{height:29px;padding:6px 9px;font-size:13px}
 .usage-tally{float:right;margin:1px 0 0 8px;padding:2px 5px;border:1px solid #456357;border-radius:9px;background:#0a1712;color:#afc7bc;font-size:9px;font-weight:700;letter-spacing:0}
+.brand-title+.usage-tally{position:absolute;top:7px;right:9px;margin:0}
 .mindful-pause{position:fixed;inset:0 0 24px;z-index:20;display:grid;padding:18px;place-items:center;background:#07110dde}.mindful-pause>div{width:min(100%,270px);padding:17px 14px;border:1px solid #4d7162;border-radius:12px;background:linear-gradient(145deg,#193229,#10221c);box-shadow:0 8px 24px #000b;text-align:center}.mindful-pause h2{margin:5px 0 8px;font-size:19px}.mindful-pause p{margin:6px 0}.mindful-pause .action{margin-top:13px}.mindful-icon{display:grid;width:36px;height:36px;margin:auto;place-items:center;border-radius:50%;background:#294b3e;color:#d9eee5;font-size:21px}
 .room-screen .bubble{font-size:13px;line-height:1.16}
 .room-screen .compose input{height:28px;font-size:13px}

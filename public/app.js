@@ -35,7 +35,7 @@ function receiptTime(value) {
   return date.toLocaleString([], sameDay ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 function stopRefresh() { clearInterval(refreshTimer); }
-function usageDay() { return new Date().toLocaleDateString("en-CA"); }
+function usageDay() { return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" }); }
 function loadMindfulUsage() {
   try {
     const saved = JSON.parse(localStorage.getItem(MINDFUL_KEY) || "{}");

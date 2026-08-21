@@ -61,7 +61,7 @@ async function startMindfulSession() {
   if (state.mindfulStarted) return;
   state.mindfulStarted = true; state.mindful = await loadMindfulUsage();
   const now = Date.now();
-  if (!state.mindful.lastLaunch || now - state.mindful.lastLaunch >= MINDFUL_LAUNCH_GAP) { state.mindful.checks++; state.mindful.launches.push(now); state.mindful.openedNow = true; }
+  if (!state.mindful.lastLaunch || now - state.mindful.lastLaunch >= MINDFUL_LAUNCH_GAP) { state.mindful.checks++; state.mindful.launches.push(now); state.mindful.openedNow = true; state.mindful.countedLaunch = now; }
   state.mindful.lastLaunch = now; state.mindful.launches = state.mindful.launches.filter(time => now - time < 24 * 60 * 60_000); state.mindful.lastTick = now; state.mindfulVisible = !document.hidden;
   saveMindfulUsage(); clearInterval(state.mindfulTimer); state.mindfulTimer = setInterval(updateMindfulTime, 15_000);
 }
@@ -97,10 +97,20 @@ function resumeMindfulRefresh() {
 }
 function showMindfulPause(reason) {
   pauseMindfulRefresh(); state.mindfulPause = true; state.mindfulReturnFocus = document.activeElement;
-  app.insertAdjacentHTML("beforeend", `<section class="mindful-pause" role="dialog" aria-modal="true"><div><span class="mindful-icon">◷</span><h2>A quick pause</h2><p>${escapeHtml(reason)}</p><p class="hint">Open with intention, then carry on.</p><button id="mindful-continue" class="action primary focusable">Continue</button></div></section>`);
-  setSoftkeys("", "Continue", "Exit"); const continueButton = document.querySelector("#mindful-continue"); continueButton.addEventListener("click", dismissMindfulPause); requestAnimationFrame(() => continueButton.focus());
+  app.insertAdjacentHTML("beforeend", `<section class="mindful-pause" role="dialog" aria-modal="true"><div><span class="mindful-icon">◷</span><h2>A quick pause</h2><p>${escapeHtml(reason)}</p><p class="hint">Continue to keep this visit, or exit to remove it from today's tally.</p><button id="mindful-continue" class="action primary focusable">Continue</button><button id="mindful-exit" class="action focusable">Exit</button></div></section>`);
+  setSoftkeys("", "Continue", "Exit"); const continueButton = document.querySelector("#mindful-continue"); continueButton.addEventListener("click", dismissMindfulPause); document.querySelector("#mindful-exit").addEventListener("click", exitMindfulPause); requestAnimationFrame(() => continueButton.focus());
 }
 function dismissMindfulPause() { state.mindfulPause = false; document.querySelector(".mindful-pause")?.remove(); state.mindfulReturnFocus?.focus?.({ preventScroll: true }); state.mindfulReturnFocus = null; resumeMindfulRefresh(); }
+async function exitMindfulPause() {
+  const usage = state.mindful;
+  if (usage?.countedLaunch) {
+    const launch = usage.countedLaunch; usage.checks = Math.max(0, usage.checks - 1); usage.launches = usage.launches.filter(time => time !== launch); usage.lastLaunch = usage.launches.at(-1) || 0; usage.countedLaunch = 0;
+    localStorage.setItem(MINDFUL_KEY, JSON.stringify(usage));
+    const stored = { ...usage }; delete stored.day; delete stored.lastTick; delete stored.openedNow; delete stored.countedLaunch;
+    await request("/api/mindful", { method: "POST", body: JSON.stringify({ day: usage.day, usage: stored }) }).catch(() => {});
+  }
+  state.mindfulPause = false; exitApp();
+}
 function screen(title, content, className = "") { clearProtectedMedia(); const heading = title === "TeleDumb" ? `<span class="brand-title"><img src="/teledumb.png" alt="">TeleDumb</span>` : escapeHtml(title); app.innerHTML = `<section class="screen ${className}"><header>${heading}${usageBadge()}</header>${content}</section>`; app.scrollTop = 0; }
 function actionError(error) { const target = document.querySelector("#action-error"); if (target) target.textContent = error.message; }
 function clearProtectedMedia() { for (const url of protectedObjectUrls) URL.revokeObjectURL(url); protectedObjectUrls.clear(); }
@@ -612,7 +622,7 @@ function softLeft() {
   if (state.view === "room") { const message = document.activeElement?.closest?.("[data-message-time]"); return message ? messageActions(Number(message.dataset.messageTime)) : chatOptions(); }
 }
 function softRight() {
-  if (state.mindfulPause) return exitApp();
+  if (state.mindfulPause) return exitMindfulPause();
   if (state.view === "linking") return linkScreen();
   if (state.view === "telegram-login" || (state.view === "conversations" && !state.showingArchived)) return exitApp();
   return back();

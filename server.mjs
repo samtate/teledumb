@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { TelegramClient } from "@mtcute/node";
 
 const PORT = Number(process.env.PORT || 8080);
@@ -11,8 +11,6 @@ const APP_DIR = join(DATA_DIR, "app");
 const TG_DIR = join(DATA_DIR, "telegram");
 const MEDIA_DIR = join(DATA_DIR, "media");
 const PUBLIC_DIR = new URL("./public/", import.meta.url).pathname;
-const sessions = new Map();
-const loginAttempts = new Map();
 const messageCache = new Map();
 const typing = new Map();
 const mediaDownloads = new Map();
@@ -20,11 +18,9 @@ let dialogsCache = { at: 0, values: [] };
 let reactionCache = { at: 0, values: [] };
 let auth = { stage: "phone", phone: "", phoneCodeHash: "", hint: "" };
 let me = null;
-let appState = { favorites: [], settings: { sendReadReceipts: true, sendTypingIndicators: true, linkPreviews: true, defaultExpiration: 0 } };
+let appState = { favorites: [], mindfulUsage: {}, settings: { sendReadReceipts: true, sendTypingIndicators: true, linkPreviews: true, defaultExpiration: 0 } };
 
-for (const [name, minimum] of [["ADMIN_PASSWORD", 12], ["SESSION_SECRET", 32]]) {
-  if (!process.env[name] || process.env[name].length < minimum) throw new Error(`${name} must be at least ${minimum} characters`);
-}
+if (!process.env.WIDGET_TOKEN || Buffer.byteLength(process.env.WIDGET_TOKEN) < 43) throw new Error("WIDGET_TOKEN must be a 256-bit random token");
 if (!process.env.PUBLIC_ORIGIN?.startsWith("https://")) throw new Error("PUBLIC_ORIGIN must be the public https:// origin");
 if (!/^\d+$/.test(process.env.TELEGRAM_API_ID || "") || !process.env.TELEGRAM_API_HASH) throw new Error("TELEGRAM_API_ID and TELEGRAM_API_HASH are required (create them at my.telegram.org)");
 
@@ -127,17 +123,7 @@ tg.onUserTyping.add?.(async event => {
   typing.set(id, { name: peerName(user), until: Date.now() + 7000 });
 });
 
-function passwordMatches(candidate) { const salt = Buffer.from(process.env.SESSION_SECRET); return timingSafeEqual(scryptSync(process.env.ADMIN_PASSWORD, salt, 32), scryptSync(String(candidate || ""), salt, 32)); }
-function sign(value) { return createHmac("sha256", process.env.SESSION_SECRET).update(value).digest("base64url"); }
-function createSession() { const id = randomBytes(24).toString("base64url"); const expires = Date.now() + 30 * 86400_000; sessions.set(id, expires); return `${id}.${expires}.${sign(`${id}.${expires}`)}`; }
-function sessionFrom(req) {
-  const cookieName = "teledumb_session=";
-  const raw = req.headers.cookie?.split(";").map(v => v.trim()).find(v => v.startsWith(cookieName))?.slice(cookieName.length); if (!raw) return null;
-  const [id, expires, signature] = raw.split("."); if (!id || !expires || !signature) return null;
-  const expected = Buffer.from(sign(`${id}.${expires}`)); const actual = Buffer.from(signature);
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected) || Number(expires) < Date.now() || sessions.get(id) !== Number(expires)) return null;
-  return id;
-}
+function tokenMatches(req) { const supplied = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1]; if (!supplied) return false; const expected = Buffer.from(process.env.WIDGET_TOKEN); const actual = Buffer.from(supplied); return actual.length === expected.length && timingSafeEqual(actual, expected); }
 function requireSameOrigin(req) {
   const origin = req.headers.origin; if (!origin || origin === process.env.PUBLIC_ORIGIN) return true;
   const host = req.headers["x-forwarded-host"]?.split(",")[0].trim() || req.headers.host;
@@ -196,16 +182,10 @@ async function cachedDialogs() {
   return values;
 }
 async function api(req, res, url) {
-  if (url.pathname === "/api/login" && req.method === "POST") {
-    const ip = req.socket.remoteAddress || "unknown"; const attempt = loginAttempts.get(ip) || { count: 0, after: 0 };
-    if (attempt.after > Date.now()) return json(res, 429, { error: "Try again later" });
-    const input = await body(req); if (!passwordMatches(input.password)) { attempt.count++; attempt.after = attempt.count >= 5 ? Date.now() + 60_000 : 0; loginAttempts.set(ip, attempt); return json(res, 401, { error: "Invalid password" }); }
-    loginAttempts.delete(ip); const secure = process.env.COOKIE_SECURE !== "false" ? "; Secure" : "";
-    return json(res, 200, { ok: true }, { "set-cookie": `teledumb_session=${createSession()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secure}` });
-  }
-  if (!sessionFrom(req)) return json(res, 401, { error: "Authentication required" });
+  if (!tokenMatches(req)) return json(res, 404, { error: "Not found" });
   if (req.method !== "GET" && !requireSameOrigin(req)) return json(res, 403, { error: "Origin rejected" });
-  if (url.pathname === "/api/logout" && req.method === "POST") { sessions.delete(sessionFrom(req)); return json(res, 200, { ok: true }, { "set-cookie": "teledumb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" }); }
+  if (url.pathname === "/api/mindful" && req.method === "GET") return json(res, 200, { usage: appState.mindfulUsage?.[url.searchParams.get("day")] || null });
+  if (url.pathname === "/api/mindful" && req.method === "POST") { const input = await body(req); if (!/^\d{4}-\d{2}-\d{2}$/.test(input.day || "")) return json(res, 400, { error: "Invalid day" }); appState.mindfulUsage ||= {}; appState.mindfulUsage[input.day] = input.usage; await persistState(); return json(res, 200, { usage: appState.mindfulUsage[input.day] }); }
   if (url.pathname === "/api/status") { await refreshAuthorization(); return json(res, 200, { telegramReady: true, linked: auth.stage === "authorized", authStage: auth.stage, passwordHint: auth.hint, settings: appState.settings, capabilities: { polls: true, pins: true, voiceNotes: true, stickers: true, groups: true, identities: false } }); }
   if (url.pathname === "/api/telegram/auth/phone" && req.method === "POST") {
     const input = await body(req); const phone = String(input.phone || "").replace(/[^+\d]/g, ""); if (!/^\+\d{7,15}$/.test(phone)) return json(res, 400, { error: "Enter a phone number in international format" });
@@ -255,7 +235,7 @@ async function api(req, res, url) {
 }
 
 const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
-async function staticFile(req, res, url) { const relative = url.pathname === "/" ? "index.html" : normalize(url.pathname).replace(/^\/+/, ""); const path = join(PUBLIC_DIR, relative); if (!path.startsWith(PUBLIC_DIR)) return json(res, 403, { error: "Forbidden" }); try { const info = await stat(path); if (!info.isFile()) throw new Error(); res.writeHead(200, { "content-type": mime[extname(path)] || "application/octet-stream", "content-length": info.size, "cache-control": "no-cache", "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY" }); createReadStream(path).pipe(res); } catch { json(res, 404, { error: "Not found" }); } }
+async function staticFile(req, res, url) { const relative = url.pathname === "/" ? "index.html" : normalize(url.pathname).replace(/^\/+/, ""); const path = join(PUBLIC_DIR, relative); if (!path.startsWith(PUBLIC_DIR)) return json(res, 403, { error: "Forbidden" }); try { const info = await stat(path); if (!info.isFile()) throw new Error(); res.writeHead(200, { "content-type": mime[extname(path)] || "application/octet-stream", "content-length": info.size, "cache-control": "no-cache", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY" }); createReadStream(path).pipe(res); } catch { json(res, 404, { error: "Not found" }); } }
 const server = createServer(async (req, res) => { try { const url = new URL(req.url, "http://localhost"); if (url.pathname === "/healthz") return json(res, 200, { ok: true }); if (url.pathname === "/favicon.ico") { res.writeHead(204); return res.end(); } if (url.pathname.startsWith("/api/")) return await api(req, res, url); return await staticFile(req, res, url); } catch (error) { log("request failed", error.stack || error.message); if (!res.headersSent) json(res, 500, { error: error.message || "Internal error" }); else res.end(); } });
 server.listen(PORT, "0.0.0.0", () => log(`web UI listening on ${PORT}`));
 async function shutdown() { server.close(); await tg.destroy().catch(() => {}); setTimeout(() => process.exit(0), 1000).unref(); }

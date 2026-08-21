@@ -6,7 +6,7 @@ let typingTimer;
 let typingActive = false;
 let activeRecording = null;
 const MINDFUL_KEY = "teledumb-mindful-usage-v1";
-const MINDFUL_LAUNCH_GAP = 90_000;
+const MINDFUL_LAUNCH_GAP = 20_000;
 const MINDFUL_BURST_WINDOW = 45 * 60_000;
 const MINDFUL_TIME_THRESHOLDS = [15, 25];
 const WIDGET_TOKEN = new URL(window.location.href).hash.slice(1);

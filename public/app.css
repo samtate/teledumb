@@ -19,8 +19,10 @@ body{background:radial-gradient(circle at top,#17352b 0,#0b1713 38%)}header{heig
 .room-typing span{display:inline-block;width:5px;height:5px;margin:0 1px;border-radius:50%;background:#c5d7d0;animation:typing-dot .9s infinite ease-in-out}
 .room-typing span:nth-child(2){animation-delay:.15s}.room-typing span:nth-child(3){animation-delay:.3s}
 @keyframes typing-dot{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
-.image-viewer{display:grid;width:100%;height:100%;padding:4px;place-items:center;background:#000}
+.image-viewer{position:relative;display:grid;width:100%;height:100%;padding:4px;place-items:center;background:#000;overflow:hidden}
 .image-viewer img{display:block;width:100%;height:100%;object-fit:contain}
+.image-viewer.zoomed{display:block;padding:0;overflow:auto}.image-viewer.zoomed img{width:100%;height:auto;max-width:none;object-fit:initial}
+.image-counter{position:absolute;top:5px;right:7px;padding:2px 5px;border-radius:8px;background:#000a;color:#fff;font-size:10px;font-weight:700}
 .native-record{position:relative;overflow:hidden}
 .native-record input{position:absolute;inset:0;width:100%;height:100%;opacity:.01;cursor:pointer}
 .native-record:focus-within{outline:3px solid var(--focus);outline-offset:-3px}
